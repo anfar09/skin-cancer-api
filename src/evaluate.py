@@ -43,8 +43,8 @@ def evaluate_model(model, test_loader, device, save_prefix="outputs/figures"):
     plt.figure(figsize=(6,6))
     plt.imshow(cm, cmap="Blues")
     plt.colorbar()
-    plt.xticks([0,1], ["Benign (0)", "Malignant (1)"])
-    plt.yticks([0,1], ["Benign (0)", "Malignant (1)"])
+    plt.xticks([0,1], ["Benign", "Malignant"])
+    plt.yticks([0,1], ["Benign", "Malignant"])
     plt.xlabel("Predicted")
     plt.ylabel("True")
 

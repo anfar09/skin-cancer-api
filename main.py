@@ -1,44 +1,48 @@
 import os
-import kagglehub
 import torch
 import torchvision
 import torch.nn as nn
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 from sklearn.model_selection import train_test_split
+import kagglehub
 
-from src.data import load_metadata, get_binary_transforms, HAM10000BinaryDataset
+from src.data import (
+    load_metadata,
+    get_binary_transforms,
+    HAM10000BinaryDataset,
+    balance_dataframe_by_undersample,
+)
 from src.train import train_one_epoch, validate_one_epoch
 from src.evaluate import evaluate_model
 
 def main():
 
-    # ==========================
-    # CONFIGURATION
-    # ==========================
+    # ---------------- Configuration ----------------
     BATCH_SIZE = 64
     NUM_WORKERS = 0
-    EPOCHS = 150
+    EPOCHS = 50
     LEARNING_RATE = 1e-3
     IMG_SIZE = 128
 
-    # ==========================
-    # CREATE OUTPUT DIRECTORIES
-    # ==========================
     os.makedirs("outputs/models", exist_ok=True)
     os.makedirs("outputs/figures", exist_ok=True)
 
-    # ==========================
-    # DOWNLOAD DATASET FROM KAGGLE
-    # ==========================
+    # ---------------- Load Dataset ----------------
     print("Downloading dataset from Kaggle...")
-    path = kagglehub.dataset_download("kmader/skin-cancer-mnist-ham10000")
-    print("Dataset path:", path)
+    data_path = kagglehub.dataset_download(
+        "kmader/skin-cancer-mnist-ham10000"
+    )
+    print("Dataset path:", data_path)
 
-    df, imageid_path = load_metadata(path)
+    df, imageid_path = load_metadata(data_path)
 
-    # ==========================
-    # TRAIN / VAL / TEST SPLIT
-    # ==========================
+    print("Before balancing:")
+    print(df["label"].value_counts())
+
+    # Balance dataset (undersampling)
+    df = balance_dataframe_by_undersample(df)
+
+    # ---------------- Train/Val/Test Split ----------------
     train_df, temp_df = train_test_split(
         df, test_size=0.3, stratify=df["label"], random_state=42
     )
@@ -48,47 +52,27 @@ def main():
 
     print(f"Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}")
 
-    # ==========================
-    # TRANSFORMS AND DATASETS
-    # ==========================
+    # ---------------- Datasets & Loaders ----------------
     train_tf, val_tf = get_binary_transforms(IMG_SIZE)
 
     train_dataset = HAM10000BinaryDataset(train_df, imageid_path, train_tf)
     val_dataset = HAM10000BinaryDataset(val_df, imageid_path, val_tf)
     test_dataset = HAM10000BinaryDataset(test_df, imageid_path, val_tf)
 
-    # Use only 30% of training data to speed up training
-    train_indices = list(range(len(train_dataset)))
-    train_indices = train_indices[: int(0.3 * len(train_indices))]
-    train_dataset = Subset(train_dataset, train_indices)
-
-    # ==========================
-    # DATA LOADERS
-    # ==========================
     train_loader = DataLoader(
-        train_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=True,
-        num_workers=NUM_WORKERS
+        train_dataset, batch_size=BATCH_SIZE,
+        shuffle=True, num_workers=NUM_WORKERS
     )
-
     val_loader = DataLoader(
-        val_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        num_workers=NUM_WORKERS
+        val_dataset, batch_size=BATCH_SIZE,
+        shuffle=False, num_workers=NUM_WORKERS
     )
-
     test_loader = DataLoader(
-        test_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        num_workers=NUM_WORKERS
+        test_dataset, batch_size=BATCH_SIZE,
+        shuffle=False, num_workers=NUM_WORKERS
     )
 
-    # ==========================
-    # MODEL SETUP
-    # ==========================
+    # ---------------- Model ----------------
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device:", device)
 
@@ -98,25 +82,23 @@ def main():
     for param in model.parameters():
         param.requires_grad = False
 
+    # Replace classification head
     model.fc = nn.Linear(model.fc.in_features, 2)
     model = model.to(device)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.fc.parameters(), lr=LEARNING_RATE)
 
-    # ==========================
-    # TRACK METRICS FOR OVERFITTING CHECK
-    # ==========================
-    train_losses = []
-    val_losses = []
-    val_accs = []
+    # ---------------- Training Loop ----------------
+    train_losses, val_losses, val_accs = [], [], []
 
-    # ==========================
-    # TRAINING LOOP
-    # ==========================
     for epoch in range(EPOCHS):
-        train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device)
-        val_loss, val_acc = validate_one_epoch(model, val_loader, criterion, device)
+        train_loss = train_one_epoch(
+            model, train_loader, criterion, optimizer, device
+        )
+        val_loss, val_acc = validate_one_epoch(
+            model, val_loader, criterion, device
+        )
 
         train_losses.append(train_loss)
         val_losses.append(val_loss)
@@ -127,28 +109,28 @@ def main():
         print(f"Val Loss:   {val_loss:.4f}")
         print(f"Val Acc:    {val_acc:.4f}")
 
-    # Save training stats
-    torch.save({
-        "train_losses": train_losses,
-        "val_losses": val_losses,
-        "val_accs": val_accs
-    }, "outputs/figures/training_stats.pth")
+    # Save training statistics
+    torch.save(
+        {
+            "train_losses": train_losses,
+            "val_losses": val_losses,
+            "val_accs": val_accs,
+        },
+        "outputs/figures/training_stats.pth",
+    )
 
-    print("Saved training stats to outputs/figures/training_stats.pth")
-
-    # ==========================
-    # MODEL EVALUATION
-    # ==========================
-    os.makedirs("outputs/figures", exist_ok=True)
-
+    # ---------------- Evaluation ----------------
     print("\nEvaluating on test set...")
-    evaluate_model(model, test_loader, device, save_prefix="outputs/figures")
+    evaluate_model(
+        model, test_loader, device, save_prefix="outputs/figures"
+    )
 
-    # ==========================
-    # SAVE FINAL MODEL
-    # ==========================
-    torch.save(model.state_dict(), "outputs/models/resnet18_binary_skin_fast.pth")
-    print("Model saved to outputs/models/resnet18_binary_skin_fast.pth")
+    # ---------------- Save Model ----------------
+    torch.save(
+        model.state_dict(),
+        "outputs/models/resnet18_binary_skin_balanced.pth",
+    )
+    print("Model saved to outputs/models/resnet18_binary_skin_balanced.pth")
 
 if __name__ == "__main__":
     main()
