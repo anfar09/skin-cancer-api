@@ -1,14 +1,15 @@
-kagglehub
-numpy
-pandas
-opencv-python
-pillow
-matplotlib
-scikit-learn
-torch
-torchvision
-tqdm
-albumentations
+--upgrade pip
 fastapi
 uvicorn
 python-multipart
+pillow
+torch
+torchvision
+numpy
+kagglehub
+pandas
+opencv-python
+matplotlib
+scikit-learn
+tqdm
+albumentations
